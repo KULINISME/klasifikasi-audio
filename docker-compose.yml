@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  hening-audio-classifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hening_audio_service
+    image: hening-audio-classifier:latest
+    restart: unless-stopped
+    ports:
+      # Sesuai requirement: Hanya membuka 1 port saja (port 5000 untuk Flask web & stream)
+      - "5000:5000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - FLASK_ENV=production
+      - PORT=5000
+    # Passthrough device audio fisik ALSA host (Opsional untuk Linux Host):
+    # devices:
+    #   - /dev/snd:/dev/snd
+    # group_add:
+    #   - audio
+    stdin_open: true
+    tty: true
+
