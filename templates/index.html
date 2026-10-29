@@ -301,7 +301,7 @@
             transition: width 0.2s ease-out;
         }
 
-        /* Consistency Tracker (10 - 15 detik) */
+        /* Consistency Tracker */
         .consistency-box {
             background-color: var(--panel-color);
             border: 1px solid var(--line-color);
@@ -497,16 +497,9 @@
         }
 
         /* Audio element */
-        #alertSirenAudio {
-            display: none;
-        }
     </style>
 </head>
 <body>
-
-    <audio id="alertSirenAudio" preload="auto">
-        <source src="/api/audio/alert" type="audio/wav">
-    </audio>
 
     <div class="container">
         
@@ -530,14 +523,14 @@
             </div>
         </header>
 
-        <!-- Alarm Banner (Konsistensi 10-15s) -->
+        <!-- Alarm Banner -->
         <div class="alarm-banner" id="alarmBanner">
             <div style="display:flex; align-items:center; gap:12px;">
                 <span style="font-size:26px;">🚨</span>
                 <div>
                     <div>PERINGATAN KEBISINGAN KONSISTEN!</div>
-                    <div style="font-size:0.82rem; font-weight:500; opacity:0.9;">
-                        Suara berisik terdeteksi melebihi batas toleransi 10 detik konsisten.
+                    <div id="alarmDescription" style="font-size:0.82rem; font-weight:500; opacity:0.9;">
+                        Suara berisik terdeteksi melebihi batas toleransi.
                     </div>
                 </div>
             </div>
@@ -597,18 +590,25 @@
                     </div>
                 </div>
 
-                <!-- 10 - 15 Detik Consistency Card -->
+                <!-- Noise Consistency Card -->
                 <div class="card">
                     <div class="card-title">
-                        <span>Konsistensi Ramai (Ambang Batas 10 - 15 Detik)</span>
-                        <span style="font-size:0.75rem; color:var(--dim-color); font-weight:600;">Fokus Evaluasi</span>
+                        <span>Konsistensi Ramai</span>
+                        <label for="consistencyTargetSelect" style="font-size:0.75rem; color:var(--dim-color); font-weight:600;">
+                            Toleransi:
+                            <select id="consistencyTargetSelect" onchange="setConsistencyTarget()" style="margin-left:4px; padding:4px 6px; border:1px solid var(--line-color); border-radius:6px; color:var(--ink-color); background:var(--card-color);">
+                                <option value="5">5 detik</option>
+                                <option value="10" selected>10 detik</option>
+                                <option value="15">15 detik</option>
+                            </select>
+                        </label>
                     </div>
 
                     <div class="consistency-box">
                         <div class="consistency-header">
                             <div>
                                 <div style="font-size:0.8rem; color:var(--dim-color); font-weight:600;">Durasi Bising Konsisten:</div>
-                                <div class="consistency-timer" id="consecutiveTimer">0s / 15s</div>
+                                <div class="consistency-timer" id="consecutiveTimer">0s / 10s</div>
                             </div>
                             <div id="consistencyStatusBadge" class="tag tag-quiet" style="font-size:0.85rem; padding:6px 12px;">
                                 Aman & Hening
@@ -621,12 +621,11 @@
 
                         <div class="consistency-markers">
                             <span>0s (Mulai)</span>
-                            <span style="font-weight:700; color:var(--warning-amber);">⚡ 10s (Batas Alarm)</span>
-                            <span>15s (Maks)</span>
+                            <span style="font-weight:700; color:var(--warning-amber);">⚡ Ambang alarm: <span id="consistencyTargetMarker">10s</span></span>
                         </div>
                     </div>
                     <div style="font-size:0.8rem; color:var(--dim-color); line-height:1.4;">
-                        *Sesuai rule sistem: Jika kebisingan berlangsung $\ge 10$ detik berturut-turut tanpa jeda, sistem segera mengaktifkan status peringatan darurat dan membunyikan sirine.
+                        *Jika kebisingan berlangsung hingga durasi toleransi yang dipilih, sistem mengaktifkan status peringatan dan membunyikan sirine.
                     </div>
                 </div>
 
@@ -718,6 +717,12 @@
         let browserAudioContext = null;
         let browserAudioStream = null;
         let browserMicActive = false;
+        let sirenAudioContext = null;
+        let sirenOscillator = null;
+        let sirenGain = null;
+        let sirenToneInterval = null;
+        let sirenToneIsHigh = false;
+        let consistencyTargetSec = 10;
 
         // Elements
         const statusBox = document.getElementById('statusBox');
@@ -727,6 +732,9 @@
         const dbValue = document.getElementById('dbValue');
         const meterFill = document.getElementById('meterFill');
         const consecutiveTimer = document.getElementById('consecutiveTimer');
+        const consistencyTargetSelect = document.getElementById('consistencyTargetSelect');
+        const consistencyTargetMarker = document.getElementById('consistencyTargetMarker');
+        const alarmDescription = document.getElementById('alarmDescription');
         const consistencyBar = document.getElementById('consistencyBar');
         const consistencyStatusBadge = document.getElementById('consistencyStatusBadge');
         const alarmBanner = document.getElementById('alarmBanner');
@@ -735,7 +743,6 @@
         const connectionText = document.getElementById('connectionText');
         const toggleListenBtn = document.getElementById('toggleListenBtn');
         const audioSirenToggleBtn = document.getElementById('audioSirenToggleBtn');
-        const alertSirenAudio = document.getElementById('alertSirenAudio');
         const historyTableBody = document.getElementById('historyTableBody');
         const micBrowserBtn = document.getElementById('micBrowserBtn');
 
@@ -751,6 +758,75 @@
         }
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
+
+        async function initializeSirenAudio() {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextClass) {
+                return Promise.reject(new Error('Browser ini tidak mendukung Web Audio API.'));
+            }
+
+            if (!sirenAudioContext) {
+                sirenAudioContext = new AudioContextClass();
+                sirenOscillator = sirenAudioContext.createOscillator();
+                sirenGain = sirenAudioContext.createGain();
+                sirenOscillator.type = 'sine';
+                sirenOscillator.frequency.value = 700;
+                sirenGain.gain.value = 0;
+                sirenOscillator.connect(sirenGain);
+                sirenGain.connect(sirenAudioContext.destination);
+                sirenOscillator.start();
+            }
+
+            if (sirenAudioContext.state === 'suspended') {
+                await sirenAudioContext.resume();
+            }
+        }
+
+        function startSirenSound() {
+            if (!sirenSoundEnabled || !alarmBanner.classList.contains('active') || !sirenGain || !sirenAudioContext) {
+                return;
+            }
+
+            const now = sirenAudioContext.currentTime;
+            sirenGain.gain.cancelScheduledValues(now);
+            sirenGain.gain.setTargetAtTime(0.18, now, 0.04);
+
+            if (!sirenToneInterval) {
+                sirenToneInterval = window.setInterval(() => {
+                    if (!sirenOscillator || !sirenAudioContext) {
+                        return;
+                    }
+                    sirenToneIsHigh = !sirenToneIsHigh;
+                    sirenOscillator.frequency.setTargetAtTime(
+                        sirenToneIsHigh ? 1000 : 700,
+                        sirenAudioContext.currentTime,
+                        0.08
+                    );
+                }, 450);
+            }
+        }
+
+        function stopSirenSound() {
+            if (sirenGain && sirenAudioContext) {
+                const now = sirenAudioContext.currentTime;
+                sirenGain.gain.cancelScheduledValues(now);
+                sirenGain.gain.setTargetAtTime(0, now, 0.04);
+            }
+            if (sirenToneInterval) {
+                window.clearInterval(sirenToneInterval);
+                sirenToneInterval = null;
+            }
+        }
+
+        document.addEventListener('pointerdown', function unlockSirenAudio() {
+            initializeSirenAudio()
+                .then(() => {
+                    if (alarmBanner.classList.contains('active')) {
+                        startSirenSound();
+                    }
+                })
+                .catch(err => console.error('Gagal mengaktifkan audio sirine:', err));
+        }, { once: true });
 
         function drawWave() {
             ctx.fillStyle = '#0E171C';
@@ -838,17 +914,21 @@
             const fillPct = Math.min(100, Math.max(5, ((data.db_level + 60) / 60) * 100));
             meterFill.style.width = `${fillPct}%`;
 
-            // Consistency Progress (0 - 15 detik)
+            // Consistency Progress (0 - selected tolerance)
+            consistencyTargetSec = data.consistency_target_sec;
+            consistencyTargetSelect.value = String(consistencyTargetSec);
+            consistencyTargetMarker.textContent = `${consistencyTargetSec}s`;
+            alarmDescription.textContent = `Suara berisik terdeteksi melebihi batas toleransi ${consistencyTargetSec} detik.`;
             const consecutive = data.consecutive_berisik_sec;
-            consecutiveTimer.textContent = `${consecutive}s / 15s`;
-            const progressPct = Math.min(100, (consecutive / 15) * 100);
+            consecutiveTimer.textContent = `${consecutive}s / ${consistencyTargetSec}s`;
+            const progressPct = Math.min(100, (consecutive / consistencyTargetSec) * 100);
             consistencyBar.style.width = `${progressPct}%`;
 
-            if (consecutive >= 10) {
+            if (consecutive >= consistencyTargetSec) {
                 consistencyBar.className = 'consistency-progress-bar danger';
                 consistencyStatusBadge.className = 'tag tag-loud';
                 consistencyStatusBadge.textContent = '⚠️ Waspada Kebisingan Tinggi';
-            } else if (consecutive >= 5) {
+            } else if (consecutive >= Math.min(5, consistencyTargetSec)) {
                 consistencyBar.className = 'consistency-progress-bar warning';
                 consistencyStatusBadge.className = 'tag';
                 consistencyStatusBadge.style.backgroundColor = '#FEF3C7';
@@ -863,11 +943,10 @@
             // Alarm Trigger
             if (data.alarm_active) {
                 alarmBanner.classList.add('active');
-                if (sirenSoundEnabled && alertSirenAudio.paused) {
-                    alertSirenAudio.play().catch(e => console.log("Audio autoplay dicegah browser:", e));
-                }
+                startSirenSound();
             } else {
                 alarmBanner.classList.remove('active');
+                stopSirenSound();
             }
 
             // History Update
@@ -913,16 +992,47 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'reset' })
             });
-            alertSirenAudio.pause();
-            alertSirenAudio.currentTime = 0;
+            stopSirenSound();
             alarmBanner.classList.remove('active');
+        }
+
+        async function setConsistencyTarget() {
+            const selectedTarget = Number(consistencyTargetSelect.value);
+            try {
+                const response = await fetch('/api/control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'set_tolerance',
+                        tolerance_seconds: selectedTarget
+                    })
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.message || 'Gagal mengubah toleransi.');
+                }
+                stopSirenSound();
+                renderUpdate(result.state);
+            } catch (err) {
+                consistencyTargetSelect.value = String(consistencyTargetSec);
+                alert(err.message);
+            }
         }
 
         function toggleSirenSound() {
             sirenSoundEnabled = !sirenSoundEnabled;
             audioSirenToggleBtn.innerHTML = sirenSoundEnabled ? '<span>🔔</span> Sirine: Aktif' : '<span>🔕</span> Sirine: Mute';
             if (!sirenSoundEnabled) {
-                alertSirenAudio.pause();
+                stopSirenSound();
+            } else {
+                initializeSirenAudio()
+                    .then(startSirenSound)
+                    .catch(err => {
+                        sirenSoundEnabled = false;
+                        audioSirenToggleBtn.innerHTML = '<span>🔕</span> Sirine: Mute';
+                        console.error('Gagal mengaktifkan audio sirine:', err);
+                        alert(err.message);
+                    });
             }
         }
 
@@ -989,4 +1099,3 @@
     </script>
 </body>
 </html>
-

@@ -6,7 +6,7 @@ Arsitektur:
 - Backend: Flask dengan Server-Sent Events (SSE) & REST API (Single Port 5000)
 - Machine Learning: SVM (RBF Kernel) + StandardScaler (16 Fitur Akustik)
 - Audio Engine: SoundDevice Input Stream dengan Fallback Stream & Web Audio API
-- Evaluasi Konsistensi: Pelacakan bising konsisten 10 - 15 detik
+- Evaluasi Konsistensi: Ambang kebisingan dapat dipilih 5, 10, atau 15 detik
 ==============================================================================
 """
 
@@ -21,7 +21,7 @@ from datetime import datetime
 import numpy as np
 import joblib
 import librosa
-from flask import Flask, render_template, Response, jsonify, request, send_file
+from flask import Flask, render_template, Response, jsonify, request
 
 # Setup Logging
 logging.basicConfig(
@@ -38,7 +38,6 @@ MODEL_PATH = os.path.join(BASE_DIR, "svm_audio_model.pkl")
 SCALER_PATH = os.path.join(BASE_DIR, "audio_scaler.pkl")
 FEATURES_PATH = os.path.join(BASE_DIR, "feature_names.pkl")
 METRICS_PATH = os.path.join(BASE_DIR, "model_metrics.json")
-ALERT_AUDIO_PATH = os.path.join(BASE_DIR, "laporan.mp3")
 
 # Audio Constants
 SAMPLE_RATE = 22050
@@ -87,7 +86,7 @@ class SystemState:
         self.db_level = -45.0
         self.rms_value = 0.005
         
-        # 10 - 15 Detik Consistency Tracker
+        # Noise consistency tracker
         self.consecutive_berisik_sec = 0
         self.consistency_target_sec = 10
         self.max_consistency_sec = 15
@@ -107,7 +106,7 @@ class SystemState:
             self.rms_value = round(rms, 5)
             self.last_update = time.time()
             
-            # Hitung konsistensi ramai 10-15 detik
+            # Hitung durasi konsistensi berdasarkan interval evaluasi audio.
             if label == "berisik":
                 self.consecutive_berisik_sec += 1
             else:
@@ -270,7 +269,7 @@ class AudioCaptureWorker(threading.Thread):
                 # Setiap siklus tertentu simulasikan bising/berbicara untuk menguji konsistensi
                 t = np.linspace(0, CHUNK_DURATION, CHUNK_SAMPLES, endpoint=False)
                 if (counter % 30) >= 18 and (counter % 30) <= 28:
-                    # Periode kebisingan 10 detik (menguji alarm konsistensi 10-15s)
+                    # Periode kebisingan 10 detik untuk menguji alarm default.
                     sim_noise = 0.08 * np.sin(2 * np.pi * 440 * t) + 0.06 * np.random.normal(0, 0.05, CHUNK_SAMPLES)
                 else:
                     # Suasana hening / normal
@@ -345,8 +344,11 @@ def api_status():
 
 @app.route("/api/control", methods=["POST"])
 def api_control():
-    """Mengatur status monitoring (Start / Stop / Reset Alarm)"""
-    data = request.get_json() or {}
+    """Mengatur monitoring, reset alarm, dan ambang toleransi kebisingan."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"status": "error", "message": "Permintaan harus berupa objek JSON"}), 400
+
     action = data.get("action")
     
     with state.lock:
@@ -360,6 +362,17 @@ def api_control():
             state.consecutive_berisik_sec = 0
             state.alarm_active = False
             msg = "Timer konsistensi berhasil di-reset."
+        elif action == "set_tolerance":
+            target_sec = data.get("tolerance_seconds")
+            if not isinstance(target_sec, int) or isinstance(target_sec, bool) or target_sec not in (5, 10, 15):
+                return jsonify({
+                    "status": "error",
+                    "message": "Toleransi harus 5, 10, atau 15 detik."
+                }), 400
+            state.consistency_target_sec = target_sec
+            state.consecutive_berisik_sec = 0
+            state.alarm_active = False
+            msg = f"Toleransi kebisingan diatur menjadi {target_sec} detik."
         else:
             return jsonify({"status": "error", "message": "Aksi tidak dikenal"}), 400
             
@@ -399,13 +412,6 @@ def api_push_audio():
         logger.error(f"Error push audio: {e}")
         return jsonify({"status": "error", "message": str(e)}), 400
     return jsonify({"status": "empty"}), 200
-
-@app.route("/api/audio/alert")
-def api_audio_alert():
-    """Mengirim file audio sirine peringatan (peringatan.wav) untuk dibunyikan di web"""
-    if os.path.exists(ALERT_AUDIO_PATH):
-        return send_file(ALERT_AUDIO_PATH, mimetype="audio/wav")
-    return jsonify({"status": "not_found"}), 404
 
 # ------------------------------------------------------------------------------
 # 6. Main Server Entrypoint
