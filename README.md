@@ -2,7 +2,7 @@
 
 Sistem pemantauan dan klasifikasi kebisingan ruangan laboratorium secara *real-time / live listening* menggunakan model **Support Vector Machine (SVM RBF)**, backend **Flask (Single Port 5000)**, dan kontainerisasi **Docker & Docker Compose**.
 
-Sistem ini didesain khusus untuk mendengarkan audio secara langsung dari mikrofon/audio stream tanpa perlu upload file, serta mengevaluasi ambang batas **konsistensi ramai 10–15 detik** sebelum memicu alarm peringatan.
+Sistem ini didesain khusus untuk mendengarkan audio secara langsung dari mikrofon/audio stream tanpa perlu upload file, serta menyediakan pilihan ambang konsistensi ramai **5, 10, atau 15 detik** sebelum memicu alarm peringatan.
 
 ---
 
@@ -15,13 +15,12 @@ sistem_klasifikasi_ensamble/
 ├── requirements.txt                # Dependensi minimal: Flask, Librosa, Scikit-Learn, SoundDevice
 ├── app.py                          # Backend Flask: Background audio capture, SVM inference, SSE streaming
 ├── templates/
-│   └── index.html                  # Dashboard web modern: Live status, VU meter, 10-15s tracker, Web Audio API
+│   └── index.html                  # Dashboard web modern: Live status, VU meter, tolerance tracker, Web Audio API
 ├── svm_audio_model.pkl             # Model produksi akhir Support Vector Machine (RBF Kernel)
 ├── ensemble_audio_model.pkl        # Model pembanding Ensemble Learning (Soft Voting)
 ├── audio_scaler.pkl                # StandardScaler terlatih untuk 16 fitur akustik
 ├── feature_names.pkl               # Daftar 16 fitur akustik (RMS, Centroid, ZCR, MFCC 1-13)
 ├── model_metrics.json              # Rekapitulasi metrik evaluasi model (Akurasi, Presisi, Overfit Gap)
-├── peringatan.wav                  # File audio nada sirine alarm
 ├── ekstraksi_audio_ensemble.ipynb  # Notebook riset & pemodelan lengkap
 ├── dataset_audio_final.csv         # Dataset 200 sampel audio UTM
 ├── fitur_mp3_berisik.csv           # Ekstraksi fitur 100 sampel berisik
@@ -97,13 +96,14 @@ Akses di browser melalui: `http://localhost:5000`.
 
 ---
 
-## ⏱️ Mekanisme Deteksi Konsistensi Ramai 10–15 Detik
+## ⏱️ Mekanisme Deteksi Konsistensi Ramai
 
 - **Masalah:** Suara keras sesaat (seperti batuk, benda terjatuh, pintu tertutup selama 1–2 detik) menghasilkan RMS tinggi namun **bukan** suasana ramai yang sebenarnya.
 - **Solusi:** Sistem menerapkan pelacak durasi kebisingan kontinu:
   - Setiap detik berurutan dengan klasifikasi `BERISIK` menambah counter durasi ($+1\text{ detik}$).
   - Jika kebisingan mereda, counter berkurang secara adaptif.
-  - **Ambang Batas Alarm:** Jika kebisingan bertahan $\ge 10\text{ detik}$ (hingga 15 detik), status darurat aktif, banner merah menyala, dan file audio `peringatan.wav` dibunyikan secara otomatis.
+  - **Ambang Batas Alarm:** Pilih toleransi **5, 10, atau 15 detik** pada dashboard (default **10 detik**). Jika counter mencapai durasi yang dipilih, banner peringatan aktif dan sirine dibangkitkan melalui Web Audio API di browser. Browser perlu mendapat interaksi pengguna terlebih dahulu sebelum dapat memutar audio.
+  - Mengubah toleransi akan mereset counter agar pengukuran dimulai dengan ambang yang baru.
 
 ---
 
