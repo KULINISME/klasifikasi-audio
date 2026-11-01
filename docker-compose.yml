@@ -5,7 +5,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: hening_audio_service
     image: hening-audio-classifier:latest
     restart: unless-stopped
     ports:
