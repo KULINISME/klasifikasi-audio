@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     ports:
       # Sesuai requirement: Hanya membuka 1 port saja (port 5000 untuk Flask web & stream)
-      - "5000:5000"
+      - "8004:5000"
     environment:
       - PYTHONUNBUFFERED=1
       - FLASK_ENV=production
